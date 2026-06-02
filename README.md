@@ -99,6 +99,3 @@ automáticamente al iniciar y podrás cargar cualquiera desde el botón del pane
 
 Coloca imágenes en la carpeta `textures/` y cárgalas desde el botón del panel.
 La textura se mapea con las coordenadas UV del modelo (si las tiene).
-# Proyecto-CG
-# Proyecto-CG
-# Proyecto-CG
