@@ -1,13 +1,12 @@
 """
 gui/panel.py
 Panel lateral de controles: sliders de transformación, selector de modelo,
-textura, color, modo de sombreado y parámetros de luz.
+textura, color, modo de sombreado, parámetros de luz y controles de animación.
 """
 
 import tkinter as tk
-from tkinter import ttk, colorchooser, filedialog
+from tkinter import ttk, colorchooser
 import os
-
 
 DARK_BG   = '#16161f'
 PANEL_BG  = '#1e1e2a'
@@ -15,6 +14,8 @@ ACCENT    = '#7c6af7'
 TEXT_COL  = '#d0d0e8'
 LABEL_COL = '#8888aa'
 ENTRY_BG  = '#2a2a3a'
+GREEN     = '#4caf82'
+RED       = '#e05a5a'
 
 
 def _label(parent, text, **kw):
@@ -53,16 +54,21 @@ def _slider(parent, label, from_, to, var, callback, resolution=0.01):
 class ControlPanel(tk.Frame):
     """Panel lateral con todos los controles de la escena."""
 
-    def __init__(self, parent, on_change, on_load_model, on_load_texture, **kw):
+    def __init__(self, parent, on_change, on_load_model, on_load_texture,
+                 on_anim_play=None, on_anim_pause=None, on_anim_stop=None,
+                 on_anim_loop=None, **kw):
         super().__init__(parent, bg=PANEL_BG, width=240, **kw)
         self.pack_propagate(False)
         self.on_change = on_change
+        self._on_anim_play  = on_anim_play
+        self._on_anim_pause = on_anim_pause
+        self._on_anim_stop  = on_anim_stop
+        self._on_anim_loop  = on_anim_loop
         self._build(on_load_model, on_load_texture)
 
     # ------------------------------------------------------------------ #
 
     def _build(self, on_load_model, on_load_texture):
-        # Scroll
         canvas = tk.Canvas(self, bg=PANEL_BG, highlightthickness=0)
         sb = tk.Scrollbar(self, orient='vertical', command=canvas.yview)
         canvas.configure(yscrollcommand=sb.set)
@@ -88,7 +94,6 @@ class ControlPanel(tk.Frame):
 
         # ── Modelo y textura ────────────────────────────────────────────
         _section(p, '▸ Archivo')
-
         btn_frame = tk.Frame(p, bg=PANEL_BG)
         btn_frame.pack(fill='x', padx=10, pady=3)
         tk.Button(btn_frame, text='Cargar modelo .obj', command=on_load_model,
@@ -102,25 +107,71 @@ class ControlPanel(tk.Frame):
                   bg=ENTRY_BG, fg=LABEL_COL, font=('Consolas', 8),
                   relief='flat', cursor='hand2').pack(fill='x', pady=2)
 
+        # ── Animación ───────────────────────────────────────────────────
+        _section(p, '▸ Animación')
+        anim_frame = tk.Frame(p, bg=PANEL_BG)
+        anim_frame.pack(fill='x', padx=10, pady=4)
+
+        # Botones Play / Pause / Stop en fila
+        btn_row = tk.Frame(anim_frame, bg=PANEL_BG)
+        btn_row.pack(fill='x', pady=2)
+
+        self._btn_play = tk.Button(
+            btn_row, text='▶  Play', command=self._anim_play,
+            bg=GREEN, fg='white', font=('Consolas', 8, 'bold'),
+            relief='flat', cursor='hand2', width=8)
+        self._btn_play.pack(side='left', padx=(0, 3))
+
+        self._btn_pause = tk.Button(
+            btn_row, text='⏸ Pause', command=self._anim_pause,
+            bg=ENTRY_BG, fg=TEXT_COL, font=('Consolas', 8),
+            relief='flat', cursor='hand2', width=8)
+        self._btn_pause.pack(side='left', padx=3)
+
+        self._btn_stop = tk.Button(
+            btn_row, text='⏹ Stop', command=self._anim_stop,
+            bg=RED, fg='white', font=('Consolas', 8),
+            relief='flat', cursor='hand2', width=8)
+        self._btn_stop.pack(side='left', padx=(3, 0))
+
+        # Loop checkbox
+        loop_row = tk.Frame(anim_frame, bg=PANEL_BG)
+        loop_row.pack(fill='x', pady=2)
+        self._loop_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            loop_row, text='Loop', variable=self._loop_var,
+            command=self._anim_loop_toggle,
+            bg=PANEL_BG, fg=TEXT_COL, selectcolor=DARK_BG,
+            activebackground=PANEL_BG, font=('Consolas', 8),
+            highlightthickness=0, cursor='hand2',
+        ).pack(side='left')
+
+        # Barra de progreso + tiempo
+        prog_row = tk.Frame(anim_frame, bg=PANEL_BG)
+        prog_row.pack(fill='x', pady=(4, 0))
+        self._anim_progress = ttk.Progressbar(
+            prog_row, orient='horizontal', length=200, mode='determinate')
+        self._anim_progress.pack(fill='x', pady=2)
+
+        self._anim_time_var = tk.StringVar(value='0.0s / 5.0s  |  frame 0/120')
+        tk.Label(anim_frame, textvariable=self._anim_time_var,
+                 bg=PANEL_BG, fg=ACCENT, font=('Consolas', 8)).pack(anchor='w')
+
+        # Estado
+        self._anim_status_var = tk.StringVar(value='● Detenida')
+        tk.Label(anim_frame, textvariable=self._anim_status_var,
+                 bg=PANEL_BG, fg=LABEL_COL, font=('Consolas', 8, 'italic')).pack(anchor='w')
+
         # ── Sombreado ────────────────────────────────────────────────────
         _section(p, '▸ Sombreado')
-
-        # Cada tipo de iluminación es un checkbox independiente.
-        # Si ninguno está activo se usa color plano puro.
         self._light_vars = {
             'gouraud':     tk.BooleanVar(value=False),
             'phong':       tk.BooleanVar(value=True),
             'blinn-phong': tk.BooleanVar(value=False),
         }
-        light_labels = {
-            'gouraud':     'Gouraud',
-            'phong':       'Phong',
-            'blinn-phong': 'Blinn-Phong',
-        }
-
+        light_labels = {'gouraud': 'Gouraud', 'phong': 'Phong', 'blinn-phong': 'Blinn-Phong'}
         shading_frame = tk.Frame(p, bg=PANEL_BG)
         shading_frame.pack(fill='x', padx=10, pady=2)
-
         for key, var in self._light_vars.items():
             row = tk.Frame(shading_frame, bg=PANEL_BG)
             row.pack(fill='x', pady=1)
@@ -131,16 +182,13 @@ class ControlPanel(tk.Frame):
                 activebackground=PANEL_BG, font=('Consolas', 8),
                 highlightthickness=0, cursor='hand2',
             ).pack(side='left')
-
-        # Indicador del modo activo resultante
         self._shading_active_var = tk.StringVar(value='activo: phong')
         tk.Label(shading_frame, textvariable=self._shading_active_var,
-                 bg=PANEL_BG, fg=ACCENT, font=('Consolas', 8, 'italic'),
-                 ).pack(anchor='w', pady=(4, 0))
+                 bg=PANEL_BG, fg=ACCENT, font=('Consolas', 8, 'italic')).pack(anchor='w', pady=(4,0))
 
         # ── Color ───────────────────────────────────────────────────────
         _section(p, '▸ Color base')
-        self._color = (200, 200, 200)
+        self._color = (250, 250, 250)
         self._color_preview = tk.Label(p, bg=self._rgb_hex(self._color),
                                        height=2, cursor='hand2')
         self._color_preview.pack(fill='x', padx=10, pady=3)
@@ -151,23 +199,23 @@ class ControlPanel(tk.Frame):
         self.tx = tk.DoubleVar(value=0.0)
         self.ty = tk.DoubleVar(value=0.0)
         self.tz = tk.DoubleVar(value=0.0)
-        _slider(p, 'X', -3, 3, self.tx, self._fire)
-        _slider(p, 'Y', -3, 3, self.ty, self._fire)
-        _slider(p, 'Z', -3, 3, self.tz, self._fire)
+        self._sl_tx = _slider(p, 'X', -3, 3, self.tx, self._fire)
+        self._sl_ty = _slider(p, 'Y', -3, 3, self.ty, self._fire)
+        self._sl_tz = _slider(p, 'Z', -3, 3, self.tz, self._fire)
 
         # ── Rotación ────────────────────────────────────────────────────
         _section(p, '▸ Rotación')
         self.rx = tk.DoubleVar(value=0.0)
         self.ry = tk.DoubleVar(value=0.0)
         self.rz = tk.DoubleVar(value=0.0)
-        _slider(p, 'X°', -180, 180, self.rx, self._fire, resolution=1)
-        _slider(p, 'Y°', -180, 180, self.ry, self._fire, resolution=1)
-        _slider(p, 'Z°', -180, 180, self.rz, self._fire, resolution=1)
+        self._sl_rx = _slider(p, 'X°', -180, 180, self.rx, self._fire, resolution=1)
+        self._sl_ry = _slider(p, 'Y°', -180, 180, self.ry, self._fire, resolution=1)
+        self._sl_rz = _slider(p, 'Z°', -180, 180, self.rz, self._fire, resolution=1)
 
         # ── Escala ──────────────────────────────────────────────────────
         _section(p, '▸ Escala')
         self.scale = tk.DoubleVar(value=1.0)
-        _slider(p, 'S', 0.05, 3.0, self.scale, self._fire)
+        self._sl_scale = _slider(p, 'S', 0.05, 3.0, self.scale, self._fire)
 
         # ── Luz ─────────────────────────────────────────────────────────
         _section(p, '▸ Luz')
@@ -201,19 +249,72 @@ class ControlPanel(tk.Frame):
                  padx=10, pady=(0, 20), anchor='w')
 
     # ------------------------------------------------------------------ #
+    #  Callbacks de animación
+    # ------------------------------------------------------------------ #
+
+    def _anim_play(self):
+        if self._on_anim_play:
+            self._on_anim_play()
+
+    def _anim_pause(self):
+        if self._on_anim_pause:
+            self._on_anim_pause()
+
+    def _anim_stop(self):
+        if self._on_anim_stop:
+            self._on_anim_stop()
+
+    def _anim_loop_toggle(self):
+        if self._on_anim_loop:
+            self._on_anim_loop(self._loop_var.get())
+
+    # ------------------------------------------------------------------ #
+    #  API pública para actualizar UI desde App
+    # ------------------------------------------------------------------ #
+
+    def set_anim_state(self, playing: bool):
+        """Cambia el color del botón Play según el estado."""
+        if playing:
+            self._btn_play.config(bg='#3a7a5a')
+            self._anim_status_var.set('▶ Reproduciendo...')
+        else:
+            self._btn_play.config(bg=GREEN)
+            self._anim_status_var.set('⏸ Pausada' if self._anim_progress['value'] > 0
+                                      else '● Detenida')
+
+    def set_anim_progress(self, frame: int, total: int, fps: int):
+        """Actualiza la barra de progreso y el tiempo."""
+        pct = (frame / max(total - 1, 1)) * 100
+        self._anim_progress['value'] = pct
+        secs = frame / fps
+        total_secs = total / fps
+        self._anim_time_var.set(f'{secs:.1f}s / {total_secs:.1f}s  |  frame {frame}/{total}')
+
+    def set_transforms_from_anim(self, tf: dict):
+        """
+        Actualiza los sliders con los valores de la animación.
+        Desactiva el callback temporalmente para no disparar un render manual.
+        """
+        self.tx.set(round(tf['tx'], 3))
+        self.ty.set(round(tf['ty'], 3))
+        self.tz.set(round(tf['tz'], 3))
+        self.rx.set(round(tf['rx'], 1))
+        self.ry.set(round(tf['ry'], 1))
+        self.rz.set(round(tf['rz'], 1))
+        self.scale.set(round(tf['sx'], 3))
+
+    # ------------------------------------------------------------------ #
 
     def _fire(self, *_):
         self.on_change()
 
     def _on_light_toggle(self):
-        """Actualiza el indicador de modo activo y dispara el re-render."""
         active = [k for k, v in self._light_vars.items() if v.get()]
         if not active:
             self._shading_active_var.set('activo: color plano')
         elif len(active) == 1:
             self._shading_active_var.set(f'activo: {active[0]}')
         else:
-            # Cuando varios están activos se usa el primero en orden de prioridad
             priority = ['blinn-phong', 'phong', 'gouraud']
             chosen = next(k for k in priority if k in active)
             self._shading_active_var.set(f'activo: {chosen}  (+{len(active)-1})')
@@ -221,8 +322,7 @@ class ControlPanel(tk.Frame):
 
     def _pick_color(self, *_):
         rgb, hex_color = colorchooser.askcolor(
-            color=self._rgb_hex(self._color), title='Seleccionar color base'
-        )
+            color=self._rgb_hex(self._color), title='Seleccionar color base')
         if rgb:
             self._color = (int(rgb[0]), int(rgb[1]), int(rgb[2]))
             self._color_preview.config(bg=self._rgb_hex(self._color))
@@ -235,17 +335,12 @@ class ControlPanel(tk.Frame):
     def _rgb_hex(rgb):
         return '#{:02x}{:02x}{:02x}'.format(*rgb)
 
-    # ── Getters públicos ────────────────────────────────────────────────
+    # ── Getters ─────────────────────────────────────────────────────────
 
     def get_color(self):
         return self._color
 
     def get_shading(self):
-        """
-        Devuelve el modo de sombreado a usar según los checkboxes activos.
-        Prioridad cuando hay varios activos: blinn-phong > phong > gouraud.
-        Si ninguno está activo, devuelve 'flat' (color plano puro).
-        """
         priority = ['blinn-phong', 'phong', 'gouraud']
         for mode in priority:
             if self._light_vars[mode].get():
@@ -269,10 +364,10 @@ class ControlPanel(tk.Frame):
         }
 
     def get_camera(self):
-        return {
-            'dist': self.cam_dist.get(),
-            'fov':  self.fov.get(),
-        }
+        return {'dist': self.cam_dist.get(), 'fov': self.fov.get()}
 
     def set_info(self, text: str):
         self._info_var.set(text)
+
+    def get_loop(self) -> bool:
+        return self._loop_var.get()

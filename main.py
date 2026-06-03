@@ -13,7 +13,7 @@ from gui.app import App
 
 
 def main():
-    app = App(width=900, height=650, title="Software 3D Renderer")
+    app = App(width=900, height=650, title="Software 3D Renderer",default_model='botella.obj')
     app.run()
 
 
